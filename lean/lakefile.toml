@@ -1,0 +1,10 @@
+name = "pluck"
+version = "0.1.0"
+
+defaultTargets = ["pluck-extract"]
+# The extractor reads .olean files, whose format is tied to the exact toolchain.
+# Build it with the toolchain of the project being plucked (see README).
+[[lean_exe]]
+name = "pluck-extract"
+root = "Extract"
+supportInterpreter = false
