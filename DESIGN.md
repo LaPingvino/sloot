@@ -1,7 +1,7 @@
 # lean-pluck: streaming and plucking for big Lean 4 developments
 
 Status: design draft, 2026-11-24. Working name `lean-pluck`. Alternatives are
-in §12.
+in §13.
 
 ## 1. Problem
 
@@ -347,7 +347,7 @@ toolchain, plus nanoda and lean4lean built separately.
 
 ### 7.3 The bin (`out/<pluck-name>/bin/`)
 
-Everything the pluck cut. It serves review, restoring, and (Joop) "a good
+Everything the pluck cut. It serves review, restoring, and (in the project owner's words) "a good
 source for jokes".
 
 * `bin/index.jsonl`, one record per removed command:
@@ -488,8 +488,8 @@ visibility follows the caller.
 artifacts and caches of a public repo are readable by anyone. Ours contain
 source excerpts (error messages, the plucked tree, `bin/src`, pretty-printed
 statements). Publishing those is redistribution, and an unlicensed release
-gives no right to redistribute. This applies to Alpöge's release: the
-private `alpoge-lean-shake` repo calls the public reusable workflow, and all
+gives no right to redistribute. This applies to Alpöge's release: a
+private fork of it calls the public reusable workflow, and all
 artifacts stay private. Public projects with an open licence get free
 minutes and the larger 4-CPU, 16 GB runner. The toolkit repo itself is public. Its own CI runs only on open fixtures: a
 Mathlib slice, synthetic tests, and **riemann-overlay** (Apache-2.0 code), the
@@ -530,7 +530,7 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
 * **Phase 1, prototype (this repo now).** The Go CLI with `graph`,
   `closure`, `why`, `report`, `diff` and `cut`, and the Lean extractor using
   per-module `readModuleDataParts`. The open test bed is riemann-overlay
-  (`~/Projects/riemann`, public, Apache-2.0 code,
+  (public, Apache-2.0 code,
   github.com/LaPingvino/riemann-overlay). Its prebuilt oleans (Mathlib and
   vendored zeta23 included, toolchain 4.33.0-rc2) are read **read-only**;
   nothing is written into that repo. The prototype produces a closure report
@@ -586,8 +586,14 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
   project commit; `query` with Mangle, benchmarked against jaala; `find`
   through Loogle; riemann-overlay's registers as saved claim queries. Whether
   its session gate adopts them is that repo's decision.
-* **Phase 6, Alpöge.** Run from the private `alpoge-lean-shake` repo, which
-  owns its own targets and reports. lean-pluck just gets bug reports.
+* **Phase 3W, pull mode** (§12): a coordinator hands out work units, and
+  idle machines pull them, in the style of SETI@home or Folding@home.
+* **Phase 6, Alpöge.** Run from a private fork of the release, which
+  owns its own targets and reports. lean-pluck just gets bug reports. The
+  first heavy run uses `scripts/desktop-run.sh` on one big machine. It runs
+  one command with resumable phases: build, extract, report, pluck, verify,
+  then publish to a results branch of the fork. That runner is the first
+  worker in waiting (§12.6).
 
 ## 11. Query layer: relations, Dolt, Datalog, statement search
 
@@ -633,7 +639,7 @@ scratch database.
 `lean-pluck diff --dolt` turns it into the per-theorem summary of §7.5.
 For Mathlib-scale graphs (about 10⁷ `uses` rows) the recursive CTE is the
 slow path. The Go closure engine stays the fast path, and Dolt is the
-history, diff and ad-hoc layer. Joop already runs Dolt widely (`~/doltdbs`),
+history, diff and ad-hoc layer. Dolt is already in use around this project,
 so there is nothing new to operate.
 
 ### 11.3 Datalog front end
@@ -714,7 +720,111 @@ mechanically re-checkable every session. Adding such a gate to
 riemann-overlay is that repo's own decision, made under its `LOOP.md` and
 `METHOD.md`. This design only provides the tool.
 
-## 12. Names
+## 12. Pull mode: idle workers, SETI/Folding@home style
+
+Instead of one machine running the pipeline from start to finish, the work
+is cut into **units**. A coordinator hands out a unit only when all of its
+inputs exist, so the work moves through the import graph like a wave. Workers
+pull units only while their machine is idle.
+
+### 12.1 Work units
+
+| unit | inputs | outputs |
+|---|---|---|
+| `build(batch)` | sources of the batch (hashes); outputs of every module in the batch's import closure (cache keys) | `.olean*`/`.ilean`/`.ir` per module (content-addressed) |
+| `extract(batch)` | outputs of the batch | graph shards (`decls/<Module>.jsonl.gz`) |
+| `pluck(targets)` | all shards in the closure | plucked tree, bin, report |
+| `verify(pluck, batch)` | plucked sources of the batch; rebuilt outputs of its imports | rebuilt outputs, statement and axiom comparison |
+| `check(export, kernel)` | closure export | kernel verdict |
+
+Batches are the same slices of the order `π` that the CI design uses (§8):
+a module set whose imports lie in earlier batches, sized to about an hour of
+work on a typical worker. Each unit is keyed by the hash of its declared
+inputs, so the same unit always has the same id and can be deduplicated.
+
+### 12.2 Coordinator
+
+The coordinator holds the queue, the input/output table and the state of
+every unit (`waiting`, `ready`, `leased(worker, until)`, `done(hash)`). It
+also holds the reference count of every output (§4), and deletes an output
+from its blob store once the last unit that needs it is done. Three
+interchangeable back ends:
+
+* **A small HTTP service** on the project's VPS. It is Go, uses the same Dolt
+  store as §11, keeps blobs on disk or in S3-compatible storage, and issues
+  leases with deadlines.
+* **A git branch as the queue.** Units are files under `queue/ready/`. A
+  worker claims one by pushing a commit that moves it to `queue/leased/`;
+  push races resolve themselves because a rejected push means someone else
+  won. Results go to `results/` (small) or to a release or bucket (large).
+  This needs no server, which suits a project that has only a GitHub repo.
+* **GitHub issues or Actions** as the queue: an issue per unit and a label as
+  its state. This is the simplest to watch, but rate limits make it suitable
+  only for coarse units.
+
+The coordinator never runs Lean. It schedules by readiness, leases with a
+timeout (an expired lease is handed out again), and prefers units whose
+outputs unblock the most others, which keeps the wave front wide.
+
+### 12.3 Workers
+
+* **Installation:** a single static Go binary (`lean-pluck worker`) plus
+  elan, at user level. On Linux it runs as a systemd **user** service, on
+  macOS as a launchd agent. No root access.
+* **Idle detection:** load average below a threshold over a few minutes,
+  screen locked or the session idle (logind `IdleHint` on Linux, `ioreg`
+  HIDIdleTime on macOS), on AC power (not battery), and enough free disk.
+* **Politeness:** `nice -n 19` plus `ionice -c 3`, a cap of
+  `nproc − reserve` threads, and a cap on RAM through cgroup v2
+  `MemoryMax` when systemd allows it. On user activity the worker **pauses**
+  the job (SIGSTOP on the process group) and resumes it later (SIGCONT). If
+  the pause outlasts the lease, it hands the unit back.
+* **Local cache:** a worker keeps the outputs it has produced or fetched, up
+  to a disk budget, and the coordinator prefers to give it units whose inputs
+  it already holds (affinity). This cuts transfer, which matters more than
+  CPU for Mathlib-sized imports.
+
+### 12.4 Results and deduplication
+
+A worker uploads its outputs under content hashes along with a small
+manifest: unit id, input hashes, output hashes, toolchain, timings and peak
+RSS. The coordinator stores each blob once. A second, identical result for the
+same unit costs only the manifest.
+
+### 12.5 Trust: workers are never trusted
+
+* **Builds and extracts** are run **redundantly** on at least two
+  independent workers, and only matching outputs are accepted. Olean files
+  are not bit-for-bit reproducible across machines in every case, so the
+  comparison is semantic. It uses the extracted shard (names, kinds, type
+  hashes, dependency lists), which is deterministic given the constants. A
+  mismatch triggers a third run and flags the workers involved.
+* **The final authority is the kernel.** Whatever the workers did, the
+  plucked closure is exported and checked by the independent kernels (§6) on
+  a machine the project owner trusts, or on several. A forged olean or shard
+  can at worst cause a wrong pluck, and that fails the rebuild or the kernel
+  check. It cannot cause a false acceptance.
+* **Sandboxing on the worker side** follows the same rule as in CI
+  (bubblewrap or landrun, no network, writes only to the unit's directory).
+  Compiling a Lean project runs its code.
+
+### 12.6 Volunteers and privacy
+
+* **Open mode:** for a public, licensed Lean project, anyone can run a
+  worker and lend cycles. Redundancy (§12.5) is mandatory in this mode.
+* **Private mode:** for a project without a licence, or a private one, only
+  the owner's own workers take part. They authenticate to the coordinator, and
+  no unit, log or blob leaves the owner's machines and private storage. This
+  is the same licence rule as in §8.4.
+* **The desktop runner as the first worker.** `scripts/desktop-run.sh` is
+  monolithic today, but its phases are already units in the sense of §12.1,
+  each resumable and recorded in a state file. The migration path is to have
+  it ask a coordinator "what is ready for me?" before each phase, with
+  batches instead of whole phases. Its state file then becomes the lease
+  record. I did not build that now: it would delay a runner that is useful as
+  it is.
+
+## 13. Names
 
 `lean-pluck` works. Alternatives:
 

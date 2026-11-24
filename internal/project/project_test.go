@@ -47,3 +47,28 @@ import NotAnImport
 		}
 	}
 }
+
+func TestSrcDir(t *testing.T) {
+	d := t.TempDir()
+	os.WriteFile(filepath.Join(d, "lakefile.toml"), []byte("name = \"x\"\nsrcDir = \"src\"\n\n[[lean_lib]]\nname = \"A\"\nsrcDir = \"other\"\n"), 0o644)
+	if s := SrcDir(d); s != "src" {
+		t.Errorf("toml: got %q", s)
+	}
+	e := t.TempDir()
+	os.WriteFile(filepath.Join(e, "lakefile.toml"), []byte("name = \"x\"\n[[lean_lib]]\nsrcDir = \"other\"\n"), 0o644)
+	if s := SrcDir(e); s != "." {
+		t.Errorf("lib-level srcDir leaked: %q", s)
+	}
+}
+
+func TestSrcDirLean(t *testing.T) {
+	d := t.TempDir()
+	os.WriteFile(filepath.Join(d, "lakefile.lean"), []byte("import Lake\nopen Lake DSL\npackage foo where\n  leanOptions := #[]\n\n@[default_target]\nlean_lib Foo\n\nlean_exe cache where\n  srcDir := \"scripts\"\n"), 0o644)
+	if s := SrcDir(d); s != "." {
+		t.Errorf("lib-level srcDir leaked from lakefile.lean: %q", s)
+	}
+	os.WriteFile(filepath.Join(d, "lakefile.lean"), []byte("package foo where\n  srcDir := \"src\"\n\nlean_lib Foo\n"), 0o644)
+	if s := SrcDir(d); s != "src" {
+		t.Errorf("got %q", s)
+	}
+}

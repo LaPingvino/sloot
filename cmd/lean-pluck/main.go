@@ -23,15 +23,17 @@ import (
 
 const usage = `lean-pluck: stream and pluck Lean 4 developments (phase-1 prototype)
 
-  lean-pluck graph   -project DIR -toolchain DIR -store DIR -modules Mod[,Mod…]
+  lean-pluck graph   -project DIR -toolchain DIR -store DIR -modules Mod[,Mod…] [-all-local]
         extract the declaration graph of the modules' import closure from an existing build
   lean-pluck closure -store DIR -targets A[,B…]           closure size and axioms
   lean-pluck why     -store DIR FROM TO                   does FROM depend on TO? print the path
   lean-pluck report  -project DIR -toolchain DIR -store DIR -targets A[,B…] [-local R] [-vendor Z] [-json F]
         closure report: axioms, hypotheses, packages, Mathlib areas, size
   lean-pluck diff    BEFORE.json AFTER.json               compare two report sets (exit 1 on new axioms/hypotheses)
-  lean-pluck verify  -project DIR -toolchain DIR -store DIR -out DIR
+  lean-pluck verify  -project DIR -toolchain DIR -store DIR -out DIR [-lake]
         compile the plucked tree with stock lean (into DIR/build), compare statements and axioms
+  lean-pluck pipeline -project DIR -toolchain DIR -store DIR -targets … -local R -vendor Z -pluck R -out DIR [-lake] [-bin-source]
+        report, cut and verify with one load of the store; writes DIR/report.{md,json}
   lean-pluck relations -store DIR -out DIR               CSV relations (decl, uses, axiom, imports, extra_use)
   lean-pluck cut     -project DIR -store DIR -targets A[,B…] -pluck R[,R…] -out DIR [-bin-source]
         write the plucked source tree and the bin
@@ -57,13 +59,15 @@ func main() {
 	pluck := fs.String("pluck", "", "comma-separated module roots whose sources are cut")
 	out := fs.String("out", "out", "output directory")
 	binSource := fs.Bool("bin-source", false, "also keep the removed source text in bin/src")
+	useLake := fs.Bool("lake", false, "verify: build the plucked tree with lake (applies the project's leanOptions)")
+	allLocal := fs.Bool("all-local", false, "graph: also extract every module of the root package, not only the import closure")
 	extractor := fs.String("extractor", defaultExtractor(), "pluck-extract binary")
 	fs.Parse(args)
 
 	var err error
 	switch cmd {
 	case "graph":
-		err = cmdGraph(*projDir, *toolchain, *store, *extractor, split(*mods))
+		err = cmdGraph(*projDir, *toolchain, *store, *extractor, split(*mods), *allLocal)
 	case "closure":
 		err = cmdClosure(*store, split(*targets))
 	case "why":
@@ -81,7 +85,9 @@ func main() {
 		}
 		err = cmdDiff(fs.Arg(0), fs.Arg(1))
 	case "verify":
-		err = cmdVerify(*projDir, *toolchain, *store, *extractor, *out)
+		err = cmdVerify(*projDir, *toolchain, *store, *extractor, *out, *useLake)
+	case "pipeline":
+		err = cmdPipeline(*projDir, *toolchain, *store, *extractor, split(*targets), split(*local), split(*vendor), split(*pluck), *out, *binSource, *useLake)
 	case "relations":
 		err = cmdRelations(*store, *out)
 	case "cut":
@@ -128,7 +134,7 @@ func set(xs []string) map[string]bool {
 	return m
 }
 
-func cmdGraph(projDir, toolchain, store, extractor string, roots []string) error {
+func cmdGraph(projDir, toolchain, store, extractor string, roots []string, allLocal bool) error {
 	if toolchain == "" {
 		return fmt.Errorf("-toolchain is required")
 	}
@@ -136,17 +142,32 @@ func cmdGraph(projDir, toolchain, store, extractor string, roots []string) error
 	if err != nil {
 		return err
 	}
+	if allLocal {
+		local, err := p.LocalModules()
+		if err != nil {
+			return err
+		}
+		roots = append(roots, local...)
+	}
 	order, _, err := p.ImportClosure(roots)
 	if err != nil {
 		return err
 	}
 	var jobs []graph.Job
+	var missing []string
 	for _, m := range order {
 		o, _, ok := p.OLean(m)
 		if !ok {
-			return fmt.Errorf("no .olean for %s (build the project first)", m)
+			missing = append(missing, m)
+			continue
 		}
 		jobs = append(jobs, graph.Job{Mod: m, OLean: o})
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: %d modules have no .olean (not built?), skipped; first: %s\n", len(missing), missing[0])
+		if len(jobs) == 0 {
+			return fmt.Errorf("nothing built: build the project first")
+		}
 	}
 	t0 := time.Now()
 	fmt.Fprintf(os.Stderr, "extracting %d modules (import closure of %s)\n", len(jobs), strings.Join(roots, ", "))
@@ -301,7 +322,7 @@ func cmdCut(projDir, toolchain, store string, targets, pluck []string, out strin
 	return nil
 }
 
-func cmdVerify(projDir, toolchain, store, extractor, out string) error {
+func cmdVerify(projDir, toolchain, store, extractor, out string, useLake bool) error {
 	if toolchain == "" {
 		return fmt.Errorf("-toolchain is required")
 	}
@@ -313,9 +334,65 @@ func cmdVerify(projDir, toolchain, store, extractor, out string) error {
 	if err != nil {
 		return err
 	}
-	if err := cut.Verify(g, p, out, extractor, nil, os.Stderr); err != nil {
+	if err := cut.Verify(g, p, out, extractor, useLake, os.Stderr); err != nil {
 		return err
 	}
 	fmt.Println("verified: the plucked tree compiles; target statements and axioms unchanged")
+	return nil
+}
+
+// cmdPipeline runs report, cut and verify on one load of the store: loading
+// a big store dominates the run time of each step otherwise.
+func cmdPipeline(projDir, toolchain, store, extractor string, targets, local, vendor, pluck []string, out string, binSource, useLake bool) error {
+	if toolchain == "" {
+		return fmt.Errorf("-toolchain is required")
+	}
+	p, err := project.Load(projDir, toolchain)
+	if err != nil {
+		return err
+	}
+	t0 := time.Now()
+	g, err := graph.LoadStore(store)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "pipeline: store loaded (%d constants) in %s\n", len(g.Decls), time.Since(t0).Round(time.Second))
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
+	md, err := os.Create(filepath.Join(out, "report.md"))
+	if err != nil {
+		return err
+	}
+	defer md.Close()
+	fmt.Fprintf(md, "# Closure report\n\n")
+	var rs []*report.Report
+	opt := report.Options{LocalRoots: set(local), VendorRoots: set(vendor)}
+	for _, t := range targets {
+		st, err := stmtOf(p, g, extractor, t)
+		if err != nil {
+			return err
+		}
+		r := report.Build(g, st, opt)
+		rs = append(rs, r)
+		report.Markdown(md, r)
+	}
+	jf, err := os.Create(filepath.Join(out, "report.json"))
+	if err != nil {
+		return err
+	}
+	report.WriteJSON(jf, rs)
+	jf.Close()
+	fmt.Fprintf(os.Stderr, "pipeline: report written\n")
+	res, err := cut.Run(g, p, targets, cut.Options{PluckRoots: set(pluck), Out: out, BinSource: binSource}, os.Stderr)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("plucked %d files: %d commands kept, %d binned; %d → %d lines\n",
+		len(res.Modules), res.KeptCmds, res.BinnedCmds, res.LinesBefore, res.LinesAfter)
+	if err := cut.Verify(g, p, out, extractor, useLake, os.Stderr); err != nil {
+		return err
+	}
+	fmt.Println("verified: the plucked tree builds; target statements and axioms unchanged")
 	return nil
 }

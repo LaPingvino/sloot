@@ -9,13 +9,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 // Package is one Lake package of the workspace.
 type Package struct {
 	Name string
-	Dir  string // source root
+	Dir  string // package directory
+	Src  string // source root: Dir joined with the package's srcDir
 	Lib  string // .lake/build/lib/lean
 }
 
@@ -24,6 +26,8 @@ type Project struct {
 	Root      string
 	Toolchain string // directory holding bin/lean
 	Packages  []Package
+	// PathPackages are the manifest's `path` dependencies, relative to Root.
+	PathPackages []string
 }
 
 // Load resolves the workspace at root. toolchain is the toolchain directory
@@ -33,9 +37,9 @@ func Load(root, toolchain string) (*Project, error) {
 	p := &Project{Root: root, Toolchain: toolchain}
 	// Core: Init, Std, Lean, Lake ship sources and oleans in the toolchain.
 	p.Packages = append(p.Packages, Package{Name: "lean4",
-		Dir: filepath.Join(toolchain, "src", "lean"), Lib: filepath.Join(toolchain, "lib", "lean")})
+		Dir: filepath.Join(toolchain, "src", "lean"), Src: filepath.Join(toolchain, "src", "lean"), Lib: filepath.Join(toolchain, "lib", "lean")})
 	p.Packages = append(p.Packages, Package{Name: "lake",
-		Dir: filepath.Join(toolchain, "src", "lean", "lake"), Lib: filepath.Join(toolchain, "lib", "lean")})
+		Dir: filepath.Join(toolchain, "src", "lean", "lake"), Src: filepath.Join(toolchain, "src", "lean", "lake"), Lib: filepath.Join(toolchain, "lib", "lean")})
 	var man struct {
 		PackagesDir string `json:"packagesDir"`
 		Packages    []struct {
@@ -56,14 +60,80 @@ func Load(root, toolchain string) (*Project, error) {
 		dir := filepath.Join(root, man.PackagesDir, pk.Name)
 		if pk.Type == "path" {
 			dir = filepath.Join(root, pk.Dir)
+			p.PathPackages = append(p.PathPackages, pk.Dir)
 		}
-		p.Packages = append(p.Packages, Package{Name: pk.Name, Dir: dir,
+		p.Packages = append(p.Packages, Package{Name: pk.Name, Dir: dir, Src: filepath.Join(dir, SrcDir(dir)),
 			Lib: filepath.Join(dir, ".lake", "build", "lib", "lean")})
 	}
-	p.Packages = append(p.Packages, Package{Name: "root", Dir: root,
+	p.Packages = append(p.Packages, Package{Name: "root", Dir: root, Src: filepath.Join(root, SrcDir(root)),
 		Lib: filepath.Join(root, ".lake", "build", "lib", "lean")})
 	return p, nil
 }
+
+var srcDirRe = regexp.MustCompile(`(?m)^\s*srcDir\s*(?:=|:=)\s*"([^"]*)"`)
+
+// SrcDir reads the package-level `srcDir` from a lakefile.toml or
+// lakefile.lean (default "."). Only the package's own setting is read; a
+// per-library srcDir is not supported yet.
+func SrcDir(dir string) string {
+	for _, f := range []string{"lakefile.toml", "lakefile.lean"} {
+		b, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			continue
+		}
+		text := string(b)
+		if f == "lakefile.toml" {
+			if i := strings.Index(text, "\n["); i >= 0 {
+				text = text[:i] // package table only, before the first [section]
+			}
+		} else {
+			// the `package … where` block only: stop at the first library,
+			// executable, script or attribute that follows it
+			i := strings.Index(text, "package ")
+			if i < 0 {
+				return "."
+			}
+			text = text[i:]
+			for _, stop := range []string{"lean_lib", "lean_exe", "script ", "@[", "target ", "require "} {
+				if j := strings.Index(text, stop); j > 0 {
+					text = text[:j]
+				}
+			}
+		}
+		if m := srcDirRe.FindStringSubmatch(text); m != nil {
+			return m[1]
+		}
+		return "."
+	}
+	return "."
+}
+
+// LocalModules lists every module whose source is under the root package's
+// source directory.
+func (p *Project) LocalModules() ([]string, error) {
+	root := p.Packages[len(p.Packages)-1]
+	var mods []string
+	err := filepath.WalkDir(root.Src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".lake" || d.Name() == ".git") {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".lean") {
+			rel, _ := filepath.Rel(root.Src, path)
+			if strings.HasPrefix(rel, "lakefile") {
+				return nil
+			}
+			mods = append(mods, strings.ReplaceAll(strings.TrimSuffix(rel, ".lean"), string(filepath.Separator), "."))
+		}
+		return nil
+	})
+	return mods, err
+}
+
+// Root is the root package.
+func (p *Project) RootPackage() *Package { return &p.Packages[len(p.Packages)-1] }
 
 func modPath(mod string) string { return filepath.Join(strings.Split(mod, ".")...) }
 
@@ -81,9 +151,11 @@ func (p *Project) OLean(mod string) (string, *Package, bool) {
 // Source returns the .lean source of mod.
 func (p *Project) Source(mod string) (string, bool) {
 	for i := range p.Packages {
-		f := filepath.Join(p.Packages[i].Dir, modPath(mod)+".lean")
-		if _, err := os.Stat(f); err == nil {
-			return f, true
+		for _, d := range []string{p.Packages[i].Src, p.Packages[i].Dir} {
+			f := filepath.Join(d, modPath(mod)+".lean")
+			if _, err := os.Stat(f); err == nil {
+				return f, true
+			}
 		}
 	}
 	return "", false

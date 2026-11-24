@@ -31,3 +31,14 @@ lean-pluck verify   -project P -toolchain $TC -store store -out out/rh
 lean-pluck diff     before.json after.json
 lean-pluck relations -store store -out rel/
 ```
+
+`lean-pluck pipeline` runs report, cut and verify with a single load of the
+store. Add `-lake` to verify the plucked tree with `lake`, which applies the
+project's `leanOptions`. `graph -all-local` extracts every module of the root
+package.
+
+## Heavy runs
+
+`scripts/desktop-run.sh [WORKDIR]` runs the whole thing on one big machine
+with a single command: build, extract, report, pluck, verify, and publish to
+a results branch. It is resumable. See the header of the script.

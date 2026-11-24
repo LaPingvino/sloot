@@ -5,12 +5,13 @@ import (
 	"testing"
 )
 
-// Runs only where the riemann-overlay build is present.
+// Runs against a built riemann-overlay checkout when
+// LEAN_PLUCK_TEST_PROJECT (the checkout) and LEAN_PLUCK_TEST_TOOLCHAIN (the
+// toolchain directory that built it) are set.
 func TestRiemannClosure(t *testing.T) {
-	root := "/home/joop/Projects/riemann"
-	tc := root + "/.lake/elan/toolchains/leanprover--lean4---v4.33.0-rc2"
-	if _, err := os.Stat(tc); err != nil {
-		t.Skip("no riemann build here")
+	root, tc := os.Getenv("LEAN_PLUCK_TEST_PROJECT"), os.Getenv("LEAN_PLUCK_TEST_TOOLCHAIN")
+	if root == "" || tc == "" {
+		t.Skip("LEAN_PLUCK_TEST_PROJECT / LEAN_PLUCK_TEST_TOOLCHAIN not set")
 	}
 	p, err := Load(root, tc)
 	if err != nil {

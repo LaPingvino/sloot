@@ -45,10 +45,28 @@ type Module struct {
 type Graph struct {
 	Decls   map[string]*Decl
 	Modules map[string]*Module
+	names   map[string]string // interned names: each name is stored once
+}
+
+func (g *Graph) intern(s string) string {
+	if t, ok := g.names[s]; ok {
+		return t
+	}
+	g.names[s] = s
+	return s
+}
+
+func (g *Graph) internAll(xs []string) []string {
+	for i, x := range xs {
+		xs[i] = g.intern(x)
+	}
+	return xs
 }
 
 // New returns an empty graph.
-func New() *Graph { return &Graph{Decls: map[string]*Decl{}, Modules: map[string]*Module{}} }
+func New() *Graph {
+	return &Graph{Decls: map[string]*Decl{}, Modules: map[string]*Module{}, names: map[string]string{}}
+}
 
 // ShardPath is where the records of one module are kept in a store.
 func ShardPath(store, mod string) string {
@@ -96,6 +114,11 @@ func (g *Graph) Read(r io.Reader) error {
 			if err := json.Unmarshal(line, &d); err != nil {
 				return err
 			}
+			d.Name, d.Mod, d.Induct = g.intern(d.Name), g.intern(d.Mod), g.intern(d.Induct)
+			g.internAll(d.Ty)
+			g.internAll(d.Val)
+			g.internAll(d.Ctors)
+			g.internAll(d.All)
 			g.Decls[d.Name] = &d
 			m := g.Modules[d.Mod]
 			if m == nil {
