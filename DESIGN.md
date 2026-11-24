@@ -513,7 +513,7 @@ lean-pluck check   --pluck DIR --kernels leanchecker,nanoda,lean4lean,con-leche,
 lean-pluck report  --targets … [--local R] [--vendor Z] [--json F]   # closure report (§7.5)
 lean-pluck diff    A.json B.json | --dolt C1 C2           # closure diff; exit 1 on new axioms/hypotheses
 lean-pluck why     X Y                                     # does X depend on Y? path, statement/proof tagged
-lean-pluck relations --out DIR                             # TSV relations (§11.1) for Dolt / Datalog
+lean-pluck relations --out DIR                             # CSV relations (§11.1) for Dolt / Datalog
 lean-pluck query   FILE.dl | -e 'rule…'                    # Datalog over the relations, with derivations
 lean-pluck find    'PATTERN' [--within T]                  # Loogle, joined with the relations
 lean-pluck run     …                                       # all of the above
@@ -558,7 +558,7 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
   * Loading the whole store into Go maps takes about 2 min per command. The
     dense `index.bin` of §7.1 (name ids and CSR adjacency) is the next fix.
 * **Phase 1b, relations.** `lean-pluck relations` emits the §11.1 tables as
-  TSV. They come straight from the graph, so they arrive early.
+  CSV (done for `decl`, `uses`, `axiom`, `imports` and `extra_use`). They come straight from the graph, so they arrive early.
 * **Phase 2, streaming.** `plan` and `stream` with refcounted deletion,
   measured on a Mathlib slice compiled from source (for example the closure
   of `Mathlib.Data.Real.Basic`): predicted against actual peak.
@@ -582,7 +582,9 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
 ## 11. Query layer: relations, Dolt, Datalog, statement search
 
 The graph is already relational, so the extractor's records map straight onto
-tables. Phase 1 can emit them from the start as TSV (`lean-pluck relations`).
+tables. Phase 1 already emits them as CSV (`lean-pluck relations`). That export has been
+loaded into Dolt with `dolt table import`, and the recursive closure query
+ran on it.
 The database and the Datalog front end come after the prototype (phase Q).
 
 ### 11.1 Relations
@@ -590,7 +592,7 @@ The database and the Datalog front end come after the prototype (phase Q).
 | relation | columns | from |
 |---|---|---|
 | `decl` | name, kind, module, line, end_line, type_size, value_size, type_hash, returns_prop | per-constant record |
-| `uses` | from, to, where ∈ {`statement`, `proof`} | `ty` / `val` lists (inductive companions count as `statement`) |
+| `uses` | from, to, where ∈ {`statement`, `proof`, `value`} | `ty` / `val` lists (inductive companions count as `statement`) |
 | `axiom` | name | `decl.kind = axiom` |
 | `hypothesis` | theorem, binder, head, project_defined | the `stmt` records of chosen (or all project) theorems |
 | `attribute` | decl, attr | decoded extension entries: `simp`, `instance`, `ext`, … (phase 3 extractor work) |

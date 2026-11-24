@@ -1,16 +1,15 @@
 package graph
 
 import (
-	"bufio"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
-// EdgeWhere says whether `to` occurs in the statement (type) or only in the
-// proof/value of `from`.
+// EdgeWhere says whether `to` occurs in the statement (type) of `from`, or
+// only in its proof (theorems) or value (definitions).
 func (g *Graph) EdgeWhere(from, to string) string {
 	d := g.Decls[from]
 	if d == nil {
@@ -34,29 +33,40 @@ func (g *Graph) EdgeWhere(from, to string) string {
 	if d.Induct == to {
 		return "statement"
 	}
-	return "proof"
+	if d.Kind == "thm" {
+		return "proof"
+	}
+	return "value"
 }
 
-// WriteRelations writes the graph as TSV relations (DESIGN §11.1), one file
-// per relation, with a header row, ready for `dolt table import` or Datalog
-// `.facts` files.
+// WriteRelations writes the graph as CSV relations (DESIGN §11.1), one file
+// per relation, with a header row, ready for `dolt table import` or as Datalog
+// fact files.
 func (g *Graph) WriteRelations(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	open := func(name string, cols ...string) (*bufio.Writer, func() error, error) {
-		f, err := os.Create(filepath.Join(dir, name+".tsv"))
+	open := func(name string, cols ...string) (*csv.Writer, func() error, error) {
+		f, err := os.Create(filepath.Join(dir, name+".csv"))
 		if err != nil {
 			return nil, nil, err
 		}
-		w := bufio.NewWriterSize(f, 1<<20)
-		fmt.Fprintln(w, strings.Join(cols, "\t"))
+		w := csv.NewWriter(f)
+		w.Write(cols)
 		return w, func() error {
-			if err := w.Flush(); err != nil {
+			w.Flush()
+			if err := w.Error(); err != nil {
 				return err
 			}
 			return f.Close()
 		}, nil
+	}
+	row := func(w *csv.Writer, xs ...any) {
+		r := make([]string, len(xs))
+		for i, x := range xs {
+			r[i] = fmt.Sprint(x)
+		}
+		w.Write(r)
 	}
 	names := make([]string, 0, len(g.Decls))
 	for n := range g.Decls {
@@ -81,17 +91,17 @@ func (g *Graph) WriteRelations(dir string) error {
 		if len(d.Rng) >= 4 {
 			line, end = d.Rng[0], d.Rng[2]
 		}
-		fmt.Fprintf(decl, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%t\n", n, d.Kind, d.Mod, line, end, d.TSize, d.VSize, d.THash, d.RetPrp)
+		row(decl, n, d.Kind, d.Mod, line, end, d.TSize, d.VSize, d.THash, d.RetPrp)
 		seen := map[string]bool{}
 		for _, m := range g.Deps(n) {
 			if seen[m] {
 				continue
 			}
 			seen[m] = true
-			fmt.Fprintf(uses, "%s\t%s\t%s\n", n, m, g.EdgeWhere(n, m))
+			row(uses, n, m, g.EdgeWhere(n, m))
 		}
 		if d.Kind == "axiom" {
-			fmt.Fprintln(ax, n)
+			row(ax, n)
 		}
 	}
 	imp, c4, err := open("imports", "module", "imported", "public", "meta", "all")
@@ -110,12 +120,12 @@ func (g *Graph) WriteRelations(dir string) error {
 	for _, m := range mods {
 		for _, i := range g.Modules[m].Imports {
 			if len(i) >= 4 {
-				fmt.Fprintf(imp, "%s\t%v\t%v\t%v\t%v\n", m, i[0], i[1], i[2], i[3])
+				row(imp, m, i[0], i[1], i[2], i[3])
 			}
 		}
 		for _, e := range g.Modules[m].Extra {
 			if len(e) >= 3 {
-				fmt.Fprintf(extra, "%s\t%v\t%v\t%v\n", m, e[0], e[1], e[2])
+				row(extra, m, e[0], e[1], e[2])
 			}
 		}
 	}

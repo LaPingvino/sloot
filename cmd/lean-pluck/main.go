@@ -32,7 +32,7 @@ const usage = `lean-pluck: stream and pluck Lean 4 developments (phase-1 prototy
   lean-pluck diff    BEFORE.json AFTER.json               compare two report sets (exit 1 on new axioms/hypotheses)
   lean-pluck verify  -project DIR -toolchain DIR -store DIR -out DIR
         compile the plucked tree with stock lean (into DIR/build), compare statements and axioms
-  lean-pluck relations -store DIR -out DIR               TSV relations (decl, uses, axiom, imports, extra_use)
+  lean-pluck relations -store DIR -out DIR               CSV relations (decl, uses, axiom, imports, extra_use)
   lean-pluck cut     -project DIR -store DIR -targets A[,B…] -pluck R[,R…] -out DIR [-bin-source]
         write the plucked source tree and the bin
 
