@@ -23,6 +23,7 @@ type Command struct {
 	Start, End pos // inclusive start, exclusive end
 	Decls      []string
 	Kept       bool
+	Anonymous  string // "example" or "#check" etc.: a command that defines nothing
 }
 
 type pos struct{ Line, Col int }
@@ -108,8 +109,13 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 		}
 		rel, _ := filepath.Rel(p.Root, src)
 		cmds := commands(g, mod)
+		ownCmds := len(cmds)
+		cmds = withAnonymous(cmds, strings.Split(string(text), "\n"))
 		kept := 0
 		for _, c := range cmds {
+			if c.Anonymous != "" {
+				continue
+			}
 			for _, n := range c.Decls {
 				if cl.Set[n] || isMeta(g.Decls[n]) {
 					c.Kept = true
@@ -135,6 +141,22 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 			body := slice(lines, c.Start, c.End)
 			e := BinEntry{Decls: c.Decls, Module: mod, File: rel, Lines: [2]int{c.Start.Line, c.End.Line},
 				Bytes: len(body), Statement: statement(body), Reason: "unreachable"}
+			if c.Anonymous != "" {
+				e.Kind = c.Anonymous
+				e.Decls = []string{fmt.Sprintf("(%s at %s:%d)", c.Anonymous, rel, c.Start.Line)}
+				e.Reason = "anonymous command: adds no constant, and may mention binned names"
+				res.Bin = append(res.Bin, e)
+				if opt.BinSource {
+					b := binSrc[rel]
+					if b == nil {
+						b = &strings.Builder{}
+						binSrc[rel] = b
+					}
+					fmt.Fprintf(b, "-- [bin] %s lines %d–%d\n%s\n\n", rel, c.Start.Line, c.End.Line, body)
+				}
+				cursor = c.End
+				continue
+			}
 			if d := g.Decls[c.Decls[0]]; d != nil {
 				e.Kind = d.Kind
 			}
@@ -174,7 +196,7 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 		}
 		res.LinesAfter += strings.Count(cleaned, "\n") + 1
 		header := fmt.Sprintf("-- lean-pluck: plucked from %s for %s; %d of %d declarations kept, the rest in bin/.\n",
-			rel, strings.Join(targets, ", "), kept, len(cmds))
+			rel, strings.Join(targets, ", "), kept, ownCmds)
 		dst := filepath.Join(srcDir, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return nil, err
@@ -257,6 +279,75 @@ func commands(g *graph.Graph, mod string) []*Command {
 		// wherever their generating command is, which we cannot locate.
 	}
 	return merged
+}
+
+// anonymousKeywords start top-level commands that define no constant.
+// They are binned: they cannot be needed by anything, and they may mention
+// binned declarations.
+var anonymousKeywords = []string{"example", "#check", "#eval", "#print", "#reduce", "#guard_msgs", "#guard", "#synth"}
+
+// withAnonymous adds anonymous commands found in the source (outside the
+// spans of named commands and outside comments) to cmds, sorted by position.
+// A command runs from its keyword line, plus a `/-- … -/` doc comment
+// directly above it, to the line before the next column-0 text.
+func withAnonymous(cmds []*Command, lines []string) []*Command {
+	inSpan := func(l int) bool {
+		for _, c := range cmds {
+			if c.Start.Line <= l && l <= c.End.Line {
+				return true
+			}
+		}
+		return false
+	}
+	depth := 0
+	var extra []*Command
+	for i := 0; i < len(lines); i++ {
+		ln := lines[i]
+		startDepth := depth
+		depth += strings.Count(ln, "/-") - strings.Count(ln, "-/")
+		if depth < 0 {
+			depth = 0
+		}
+		if startDepth > 0 || inSpan(i+1) {
+			continue
+		}
+		kw := ""
+		for _, k := range anonymousKeywords {
+			if strings.HasPrefix(ln, k+" ") || ln == k || strings.HasPrefix(ln, k+"\t") {
+				kw = k
+				break
+			}
+		}
+		if kw == "" {
+			continue
+		}
+		start := i
+		// include a doc comment that ends right above
+		if j := i - 1; j >= 0 && strings.HasSuffix(strings.TrimSpace(lines[j]), "-/") {
+			for k := j; k >= 0; k-- {
+				if strings.HasPrefix(strings.TrimSpace(lines[k]), "/--") {
+					start = k
+					break
+				}
+				if k < j && strings.Contains(lines[k], "-/") {
+					break
+				}
+			}
+		}
+		end := i + 1
+		for end < len(lines) && (lines[end] == "" || lines[end][0] == ' ' || lines[end][0] == '\t') {
+			end++
+		}
+		// do not swallow trailing blank lines
+		for end > i+1 && strings.TrimSpace(lines[end-1]) == "" {
+			end--
+		}
+		extra = append(extra, &Command{Start: pos{start + 1, 0}, End: pos{end, len([]rune(lines[end-1]))}, Anonymous: kw})
+		i = end - 1
+	}
+	all := append(cmds, extra...)
+	sort.Slice(all, func(i, j int) bool { return all[i].Start.less(all[j].Start) })
+	return all
 }
 
 // metaTypes mark constants that change how later commands parse or

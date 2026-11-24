@@ -263,11 +263,18 @@ trace in terms. Work at **command granularity**:
      with a slightly different simp set is the main source of breakage.
    * `module`: keep every module in the closure whole. Only files are
      dropped. This is the safe fallback.
-5. **Imports of plucked files** become the original imports minus modules
+5. **Anonymous commands are binned.** `example`, `#check`, `#eval`,
+   `#print`, `#guard_msgs` and similar define no constant, so nothing can
+   need them, but they may mention binned names. The first verify on
+   riemann-overlay failed for exactly this reason: `example`s in `Fiber.lean`
+   used binned lemmas. They go to the bin with reason "anonymous command".
+   `attribute [...] x` commands whose names were all binned get the same
+   treatment (phase 3).
+6. **Imports of plucked files** become the original imports minus modules
    that are now empty, with their imports transitively re-exported where
    needed. Afterwards, `lake shake --fix` can be run on `module`-system files
    as an optional tidy-up.
-6. **Provenance.** Each plucked file starts with a comment block giving the
+7. **Provenance.** Each plucked file starts with a comment block giving the
    original path, content hash, line count, kept and removed counts, and the
    bin path.
 
@@ -528,6 +535,25 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
   hypothesis), plucks it to a source tree of Riemann files with a bin, and
   verifies the cut by compiling the plucked files against the stock Mathlib
   and zeta23 oleans in a scratch store.
+  **Phase 1 findings (2026-11-24, riemann-overlay, toolchain 4.33.0-rc2):**
+  * Per-module extraction works as designed. It reads the three olean parts
+    without loading imports. Theorem bodies of `module`-system files (Mathlib)
+    come from the private part. The import closure of `Riemann.RH` (10,641
+    modules: core, Batteries, Mathlib, zeta23 and Riemann) was extracted in
+    11 min 43 s on a machine at load 25–50, into a 112 MB gzip store. That
+    is about 2 % of the 6.1 GB of Mathlib oleans.
+  * `Riemann.proportion_of_RH_zeta` has 70,167 constants in its closure:
+    Mathlib 59,837, Init 7,589, Zeta23 2,422, Riemann 130. Only the three
+    standard axioms appear, and `RiemannHypothesis` shows up as hypothesis
+    `h`. This agrees with the repo's own `audit/PrintAxioms.lean` claim.
+    `why` finds the route into vendored zeta23 through `zetaFamily` (used in
+    the statement), then `zetaNonempty` (proof), then
+    `Zeta23.RiemannVonMangoldt.main`.
+  * The source cut keeps 86 of 841 Riemann commands and goes from
+    16,748 to 3,592 lines. Four files are emptied down to their imports.
+    307 binned commands are used by nothing else in the project.
+  * Loading the whole store into Go maps takes about 2 min per command. The
+    dense `index.bin` of §7.1 (name ids and CSR adjacency) is the next fix.
 * **Phase 1b, relations.** `lean-pluck relations` emits the §11.1 tables as
   TSV. They come straight from the graph, so they arrive early.
 * **Phase 2, streaming.** `plan` and `stream` with refcounted deletion,
