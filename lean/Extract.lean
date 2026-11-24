@@ -52,7 +52,8 @@ def partFiles (base : System.FilePath) : IO (Array System.FilePath) := do
 
 unsafe def extractModule (mod : String) (base : System.FilePath) (out : IO.FS.Stream) : IO Unit := do
   let parts ← readModuleDataParts (← partFiles base)
-  let last := parts[parts.size - 1]!.1
+  let some (last, _) := parts.back?
+    | throw <| IO.userError s!"no module data in {base}"
   -- declaration ranges and extension statistics, merged over all parts
   let mut ranges : NameMap DeclarationRanges := {}
   let mut exts : Std.HashMap String Nat := {}
@@ -65,7 +66,7 @@ unsafe def extractModule (mod : String) (base : System.FilePath) (out : IO.FS.St
         for e in es do
           let (n, r) : Name × DeclarationRanges := unsafeCast e
           ranges := ranges.insert n r
-      if ext == `Lean.extraModUses then
+      if ext.toString.endsWith "Lean.extraModUses" then
         for e in es do
           let u : ExtraModUse := unsafeCast e
           extra := extra.push (Json.arr #[nameJ u.module, u.isExported, u.isMeta])
@@ -106,7 +107,8 @@ unsafe def extractModule (mod : String) (base : System.FilePath) (out : IO.FS.St
 /-- Strip binders of a type and report each one: what the theorem *takes*. -/
 unsafe def stmt (name : Name) (base : System.FilePath) (out : IO.FS.Stream) : IO Unit := do
   let parts ← readModuleDataParts (← partFiles base)
-  let last := parts[parts.size - 1]!.1
+  let some (last, _) := parts.back?
+    | throw <| IO.userError s!"no module data in {base}"
   let some ci := last.constants.find? (·.name == name)
     | throw <| IO.userError s!"{name} not found in {base}"
   let rec go (e : Expr) (acc : Array Json) : Array Json × Expr :=

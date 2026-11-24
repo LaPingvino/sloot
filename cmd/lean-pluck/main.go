@@ -30,6 +30,9 @@ const usage = `lean-pluck: stream and pluck Lean 4 developments (phase-1 prototy
   lean-pluck report  -project DIR -toolchain DIR -store DIR -targets A[,B…] [-local R] [-vendor Z] [-json F]
         closure report: axioms, hypotheses, packages, Mathlib areas, size
   lean-pluck diff    BEFORE.json AFTER.json               compare two report sets (exit 1 on new axioms/hypotheses)
+  lean-pluck verify  -project DIR -toolchain DIR -store DIR -out DIR
+        compile the plucked tree with stock lean (into DIR/build), compare statements and axioms
+  lean-pluck relations -store DIR -out DIR               TSV relations (decl, uses, axiom, imports, extra_use)
   lean-pluck cut     -project DIR -store DIR -targets A[,B…] -pluck R[,R…] -out DIR [-bin-source]
         write the plucked source tree and the bin
 
@@ -77,6 +80,10 @@ func main() {
 			break
 		}
 		err = cmdDiff(fs.Arg(0), fs.Arg(1))
+	case "verify":
+		err = cmdVerify(*projDir, *toolchain, *store, *extractor, *out)
+	case "relations":
+		err = cmdRelations(*store, *out)
 	case "cut":
 		err = cmdCut(*projDir, *toolchain, *store, split(*targets), split(*pluck), *out, *binSource)
 	default:
@@ -180,9 +187,21 @@ func cmdWhy(store, from, to string) error {
 		if d := g.Decls[n]; d != nil {
 			mod = d.Mod
 		}
-		fmt.Printf("  %s%s  [%s]\n", strings.Repeat("  ", min(i, 1)), n, mod)
+		if i == 0 {
+			fmt.Printf("  %s  [%s]\n", n, mod)
+			continue
+		}
+		fmt.Printf("    → %s  [%s]  (in %s of %s)\n", n, mod, g.EdgeWhere(p[i-1], n), p[i-1])
 	}
 	return nil
+}
+
+func cmdRelations(store, out string) error {
+	g, err := graph.LoadStore(store)
+	if err != nil {
+		return err
+	}
+	return g.WriteRelations(out)
 }
 
 func stmtOf(p *project.Project, g *graph.Graph, extractor, target string) (*report.Stmt, error) {
@@ -279,5 +298,24 @@ func cmdCut(projDir, toolchain, store string, targets, pluck []string, out strin
 	sort.Strings(res.EmptiedFiles)
 	fmt.Printf("plucked %d files: %d commands kept, %d binned; %d → %d lines. Output in %s\n",
 		len(res.Modules), res.KeptCmds, res.BinnedCmds, res.LinesBefore, res.LinesAfter, out)
+	return nil
+}
+
+func cmdVerify(projDir, toolchain, store, extractor, out string) error {
+	if toolchain == "" {
+		return fmt.Errorf("-toolchain is required")
+	}
+	p, err := project.Load(projDir, toolchain)
+	if err != nil {
+		return err
+	}
+	g, err := graph.LoadStore(store)
+	if err != nil {
+		return err
+	}
+	if err := cut.Verify(g, p, out, extractor, nil, os.Stderr); err != nil {
+		return err
+	}
+	fmt.Println("verified: the plucked tree compiles; target statements and axioms unchanged")
 	return nil
 }

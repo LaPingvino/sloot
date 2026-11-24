@@ -111,7 +111,7 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 		kept := 0
 		for _, c := range cmds {
 			for _, n := range c.Decls {
-				if cl.Set[n] {
+				if cl.Set[n] || isMeta(g.Decls[n]) {
 					c.Kept = true
 					break
 				}
@@ -243,10 +243,11 @@ func commands(g *graph.Graph, mod string) []*Command {
 	for _, c := range merged {
 		for _, n := range c.Decls {
 			owner[n] = c
+			owner[stripPrivate(n)] = c
 		}
 	}
 	for _, n := range noRange {
-		for p := prefix(n); p != ""; p = prefix(p) {
+		for p := prefix(stripPrivate(n)); p != ""; p = prefix(p) {
 			if c := owner[p]; c != nil {
 				c.Decls = append(c.Decls, n)
 				break
@@ -256,6 +257,42 @@ func commands(g *graph.Graph, mod string) []*Command {
 		// wherever their generating command is, which we cannot locate.
 	}
 	return merged
+}
+
+// metaTypes mark constants that change how later commands parse or
+// elaborate (syntax, macros, elaborators, delaborators, simprocs). Their uses
+// leave no trace in terms, so commands defining them are never cut
+// (DESIGN §5.3, rule 3, at command granularity).
+var metaTypes = map[string]bool{
+	"Lean.ParserDescr": true, "Lean.TrailingParserDescr": true, "Lean.Parser.Parser": true,
+	"Lean.Parser.TrailingParser": true, "Lean.Macro": true, "Lean.Elab.Term.TermElab": true,
+	"Lean.Elab.Tactic.Tactic": true, "Lean.Elab.Command.CommandElab": true,
+	"Lean.PrettyPrinter.Delaborator.Delab": true, "Lean.PrettyPrinter.Unexpander": true,
+	"Lean.Meta.Simp.Simproc": true, "Lean.Meta.Simp.DSimproc": true,
+	"Lean.Meta.Simp.SimprocDeclExtension": true, "Lean.SyntaxNodeKind": true,
+}
+
+func isMeta(d *graph.Decl) bool {
+	if d == nil {
+		return false
+	}
+	for _, t := range d.Ty {
+		if metaTypes[t] {
+			return true
+		}
+	}
+	return false
+}
+
+// stripPrivate turns `_private.Mod.Path.0.Foo.bar` into `Foo.bar`.
+func stripPrivate(n string) string {
+	if !strings.HasPrefix(n, "_private.") {
+		return n
+	}
+	if i := strings.Index(n, ".0."); i >= 0 {
+		return n[i+3:]
+	}
+	return n
 }
 
 func prefix(n string) string {
