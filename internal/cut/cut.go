@@ -176,7 +176,7 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 			}
 			sort.Strings(e.UsedBy)
 			if len(e.UsedBy) == 0 {
-				e.Reason = "unreachable; used by nothing in the project"
+				e.Reason = "unreachable; used by nothing else in the graphed import closure"
 			}
 			res.Bin = append(res.Bin, e)
 			if opt.BinSource {
@@ -475,7 +475,7 @@ func writeBinReport(path string, r *Result) {
 			orphans++
 		}
 	}
-	fmt.Fprintf(&b, "%d binned commands are used by nothing else in the project at all.\n\n", orphans)
+	fmt.Fprintf(&b, "%d binned commands are used by nothing else in the graphed import closure (files outside it, and examples, are not counted).\n\n", orphans)
 	bySize := append([]BinEntry(nil), r.Bin...)
 	sort.Slice(bySize, func(i, j int) bool { return bySize[i].TermSize > bySize[j].TermSize })
 	fmt.Fprintf(&b, "## Largest binned declarations (by term size)\n\n| declaration | file | lines | term size |\n|---|---|---|---|\n")

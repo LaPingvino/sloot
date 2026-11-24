@@ -58,7 +58,7 @@ memory and was not confirmed in a primary source today.
 
 | Tool | What it covers | What it lacks |
 |---|---|---|
-| **Lake** (4.33.1 `lake --help`) | `build`, `query`, `env`, `lean`, `shake`, `pack`/`unpack`, and `cache get/put/add/stage/unstage/put-staged`. The Lake cache is content-addressed (input hash to output artifact hashes, JSONL per package, `~/.cache/lake`), with S3-compatible remotes scoped by `--scope` or `--repo`. 4.34–4.35 added `--package` to `cache get/put` and `lake build`. | Lake rebuilds whatever is missing. It has no notion of "delete once no longer needed", so a streamer must drive `lean` directly (§4), using Lake only to resolve packages and fetch caches. |
+| **Lake** (4.33.1 `lake --help`, `lake help build`) | Module targets with facets (`lake build +Mod:olean`, `:ilean`, `:c`, `:deps`, or a source path `Foo/Bar.lean:o`). `lake env` sets `LEAN_PATH` for a tool. Per module, Lake writes a `--setup` JSON (`name`, `package`, `isModule`, `options`, `importArts`, `plugins`, `dynlibs`); for `module` files, `importArts` maps each import to its artifacts, and a streamer driving `lean` directly has to produce the same file. Also `build`, `query`, `env`, `lean`, `shake`, `pack`/`unpack`, and `cache get/put/add/stage/unstage/put-staged`. The Lake cache is content-addressed (input hash to output artifact hashes, JSONL per package, `~/.cache/lake`), with S3-compatible remotes scoped by `--scope` or `--repo`. 4.34–4.35 added `--package` to `cache get/put` and `lake build`. | Lake rebuilds whatever is missing. It has no notion of "delete once no longer needed", so a streamer must drive `lean` directly (§4), using Lake only to resolve packages and fetch caches. |
 | **Mathlib cache** ([Cache/README.md](https://github.com/leanprover-community/mathlib4/blob/master/Cache/README.md)) | `lake exe cache get [files]` fetches `.ltar` bundles (olean, ilean, trace, c, hash) per file. A file hash combines the root hash, path, content and import hashes. Passing files fetches only their import closure. | Mathlib-specific, though `lake cache` is set to replace it. Mathlib CI sets `LAKE_NO_CACHE` because the two are incompatible. |
 | **Mathlib CI** (`.github/workflows/build_template.yml` in the pinned Mathlib) | Builds on self-hosted Hoskinson runners (`runs_on: pr`) inside a **landrun** sandbox with no network, then **stages** the cache. Upload happens in a separate job on a disposable `ubuntu-latest` runner. `leanchecker` runs daily, not per PR ("quite expensive for little benefit"). | Relies on big self-hosted machines and the full 6.1 GB olean tree. It is still the pattern to copy for trust: build sandboxed, upload separately. |
 
@@ -137,10 +137,13 @@ from the bin and repeat (§5.4).
 
 ## 4. Reference-counted outputs
 
-**Key fact.** Lean loads the *entire transitive import closure* of a module
-when it elaborates it. A module's outputs are therefore live until the last
-module that **transitively** imports it has compiled. Direct imports are not
-enough.
+**Key fact.** Lean loads the transitive import closure of a module when it
+elaborates it. Under the module system some imports are loaded as `.ir` only
+(`EffectiveImport.hasData` in `Lean/Environment.lean`), so the closure is an
+*upper bound* on what must be present. A module's outputs are kept live
+until the last module that **transitively** imports it has compiled. That is
+always safe; direct imports alone are not enough. Phase 2 measures how much a
+finer, module-system-aware liveness (data vs IR only) would save.
 
 Notation: compile set `S` (the import closure of the targets) and an order
 `π` (a topological order of `S`).
@@ -317,7 +320,7 @@ toolchain, plus nanoda and lean4lean built separately.
 | Compilation | Stock `lean`: elaborator and C++ kernel, as for any Lean user. It runs untrusted code (tactics, `#eval`, `initialize`), so it runs in a sandbox (bubblewrap, as `lake check` does, or landrun, as Mathlib CI does) with no network and writes limited to the store. |
 | Extractor and graph | **Not trusted.** A wrong graph can only make the pluck too small, which fails the rebuild, or too big, which is harmless. |
 | Pluck and repair (Go) | **Not trusted.** Its output is rebuilt from scratch by stock Lean. |
-| "Same theorem" | The recorded type from the original oleans is compared with the rebuilt one (`comparator`-style; on 4.35+, `lake comparator` with the original as challenge). |
+| "Same theorem" | The recorded type from the original oleans is compared with the rebuilt one (`comparator`-style; on 4.35+, `lake comparator` with the original as challenge). **Phase-1 limit:** the prototype compares a 32-bit structural hash of the target's own type, not the definitions the type mentions, and passes no lakefile `leanOptions` to `lean`. Next steps are to compare `th` for every kept project constant (cheap), and then to do a real comparator-style check of the statement's definitional closure. |
 | Axioms | Computed twice: once from the graph, once in a rebuilt environment (`CollectAxioms`). Both must agree. |
 | Kernel acceptance | `leanchecker` replay, then independent kernels on the closure export. Disagreement is reported, not voted away. The Arena guide warns that it is not by itself proof of unsoundness. |
 | lean4export faithfulness | Covered by diversity: several kernels with different code bases (Rust, Lean, set-theoretic model proof) read the same file. The residual risk is an exporter bug that drops a constant, which would surface as an unknown constant in the kernels. |
@@ -612,7 +615,9 @@ WITH RECURSIVE dep(n, path) AS (
 SELECT DISTINCT n FROM dep JOIN axiom ON axiom.name = dep.n;
 ```
 
-`dolt diff <c1> <c2> uses decl hypothesis` gives the raw closure diff.
+`dolt diff <c1> <c2> uses decl hypothesis`, or the `dolt_diff('c1','c2','uses')`
+table function inside SQL, gives the raw closure diff. Both were checked on a
+scratch database.
 `lean-pluck diff --dolt` turns it into the per-theorem summary of §7.5.
 For Mathlib-scale graphs (about 10⁷ `uses` rows) the recursive CTE is the
 slow path. The Go closure engine stays the fast path, and Dolt is the
@@ -639,15 +644,18 @@ Engines compared (2026-11-24):
 
 | engine | form | recursion / negation / aggregation | provenance | maturity |
 |---|---|---|---|---|
-| **Mangle** ([repo](https://github.com/google/mangle), [engine docs](https://pkg.go.dev/github.com/google/mangle/engine)) | embeddable Go library, Apache-2.0 | yes / stratified / yes (`group_by`, `fn:Count`) | not documented; there is a `provenance` dir in the repo but its contents are unconfirmed | about 3k stars, used by several projects, started at Google and now independent (Codeberg primary) |
+| **Mangle** ([repo](https://github.com/google/mangle), [engine docs](https://pkg.go.dev/github.com/google/mangle/engine)) | embeddable Go library, Apache-2.0 | yes / *(negation unverified: the README shows only `!=`)* / yes (`group_by`, `fn:Count`) | not documented; there is a `provenance` dir in the repo but its contents are unconfirmed | about 3k stars, used by several projects, started at Google and now independent (Codeberg primary) |
 | **jaala** ([pkg](https://pkg.go.dev/github.com/panyam/jaala)) | embeddable Go library, Apache-2.0 | yes / stratified / yes | **native**: each answer row cites its facts, plus an optional derivation tree. Also queries *across versions* of the facts and shows what changed | pre-1.0 (v0.1.104), young, small user base |
 | swdunlop `seminaive` ([pkg](https://pkg.go.dev/swdunlop.dev/pkg)) | small Go package | basic | none | small |
-| **Soufflé** ([provenance paper](https://arxiv.org/abs/1907.05045)) | C++ compiler/interpreter, separate binary | full | native (`-t explain`, minimal-height proof trees, per Zhao, Subotić and Scholz) | mature, the fastest at scale. Not embeddable in Go; separate process and compile step |
+| **Soufflé** ([provenance paper](https://arxiv.org/abs/1907.05045)) | C++ compiler/interpreter, separate binary | full | native: minimal-height proof trees (Zhao, Subotić and Scholz). The exact CLI flag *(`-t explain`, unverified)* was not confirmed | mature, the fastest at scale. Not embeddable in Go; separate process and compile step |
 
 **Pick: Mangle**, as an embedded library behind a small `Engine` interface.
 The reasons:
 
 1. A tool that feeds trust decisions should rest on the most-used engine.
+   **Caveat:** `price` needs stratified negation, and Mangle's support for it
+   is unverified. Phase Q1 checks it first. If it is missing, jaala (which
+   documents stratified negation) becomes the pick.
 2. Derivations for our rules are cheap to add ourselves. We stamp each derived
    fact with the iteration it first appeared in, then rebuild a minimal-height
    proof by choosing, for each tuple, a rule instance whose body facts are all
