@@ -552,9 +552,19 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
     `why` finds the route into vendored zeta23 through `zetaFamily` (used in
     the statement), then `zetaNonempty` (proof), then
     `Zeta23.RiemannVonMangoldt.main`.
-  * The source cut keeps 86 of 841 Riemann commands and goes from
-    16,748 to 3,592 lines. Four files are emptied down to their imports.
-    307 binned commands are used by nothing else in the project.
+  * The source cut covers the 12 of 14 Riemann files in the target's import
+    closure. It keeps 86 commands and bins 758, 3 of them anonymous
+    `example`s. Lines go from 16,748 to 3,571, and four files are emptied
+    down to their imports. 310 binned commands are used by nothing else in the
+    graphed import closure. Files outside that closure (`Capacity`,
+    `Optimal`) are not counted, so this is an upper bound on "dead code".
+  * **Verify passed** on the second attempt. The first failed on `example`s
+    that use binned lemmas, which led to rule 5 of §5.3. Stock `lean`
+    4.33.0-rc2 compiled all 12 plucked files against the untouched Mathlib
+    and zeta23 oleans in 74 min of wall clock on a machine at load 15–20
+    (`Riemann.Assumptions` alone took 22 min). The target's statement hash
+    and axioms (`Classical.choice`, `Quot.sound`, `propext`) are unchanged.
+    No repair round was needed.
   * Loading the whole store into Go maps takes about 2 min per command. The
     dense `index.bin` of §7.1 (name ids and CSR adjacency) is the next fix.
 * **Phase 1b, relations.** `lean-pluck relations` emits the §11.1 tables as
