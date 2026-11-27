@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# desktop-run.sh — one-command heavy run of lean-pluck on the private Alpöge
+# desktop-run.sh — one-command heavy run of sloot on the private Alpöge
 # fork, meant for a big desktop (≈2 TB disk, 64 GB RAM).
 #
 #   bash desktop-run.sh [WORKDIR]          (default WORKDIR: ~/lean-work)
@@ -11,7 +11,7 @@
 # It:
 #   * installs elan (user-level, ~/.elan, no sudo) and, if needed, Go (into
 #     WORKDIR/tools) when they are missing;
-#   * clones or updates lean-pluck and the private fork into WORKDIR;
+#   * clones or updates sloot and the private fork into WORKDIR;
 #   * fetches Mathlib's cache at the fork's pin, builds the whole release
 #     niced and on all cores but $RESERVE (default 2);
 #   * extracts the declaration graph of every module into WORKDIR/store;
@@ -30,14 +30,14 @@ set -euo pipefail
 
 WORK=$(mkdir -p "${1:-${LEAN_WORK:-$HOME/lean-work}}" && cd "${1:-${LEAN_WORK:-$HOME/lean-work}}" && pwd)
 FORK_URL=${FORK_URL:-git@github.com:LaPingvino/alpoge-lean-shake.git}
-PLUCK_URL=${PLUCK_URL:-git@github.com:LaPingvino/lean-pluck.git}
+PLUCK_URL=${PLUCK_URL:-git@github.com:LaPingvino/sloot.git}
 PLUCK_REF=${PLUCK_REF:-main}
 TARGET=${TARGET:-riemannHypothesis}
 RESERVE=${RESERVE:-2}
 GO_VERSION=${GO_VERSION:-1.27.4}
 
 FORK=$WORK/alpoge-lean-shake
-PLUCK=$WORK/lean-pluck
+PLUCK=$WORK/sloot
 STORE=$WORK/store
 OUT=$WORK/out/$TARGET
 STATE=$WORK/state
@@ -111,7 +111,7 @@ sync_repo() {   # sync_repo URL DIR REF
 clone() {
   sync_repo "$PLUCK_URL" "$PLUCK" "$PLUCK_REF"
   sync_repo "$FORK_URL" "$FORK" main
-  echo "lean-pluck at $(git -C "$PLUCK" rev-parse --short HEAD), fork at $(git -C "$FORK" rev-parse --short HEAD)"
+  echo "sloot at $(git -C "$PLUCK" rev-parse --short HEAD), fork at $(git -C "$FORK" rev-parse --short HEAD)"
 }
 
 toolchain() {
@@ -137,7 +137,7 @@ tools() {
   echo "$tc" > "$ex/lean-toolchain"
   (cd "$ex" && lake build)
   mkdir -p "$WORK/bin"
-  (cd "$PLUCK" && go build -o "$WORK/bin/lean-pluck" ./cmd/lean-pluck)
+  (cd "$PLUCK" && go build -o "$WORK/bin/sloot" ./cmd/sloot)
   ln -sf "$ex/.lake/build/bin/pluck-extract" "$WORK/bin/pluck-extract"
 }
 
@@ -150,7 +150,7 @@ roots() {
 
 extract() {
   # resumable: shards newer than their .olean are skipped
-  "${NICE[@]}" "$WORK/bin/lean-pluck" graph -project "$FORK" -toolchain "$(tcdir)" \
+  "${NICE[@]}" "$WORK/bin/sloot" graph -project "$FORK" -toolchain "$(tcdir)" \
     -store "$STORE" -extractor "$WORK/bin/pluck-extract" -modules Main -all-local
 }
 
@@ -159,7 +159,7 @@ pluck() {
   r=$(roots)
   echo "project module roots: $r"
   # a failed verify is recorded and published, not fatal: the logs are the result
-  if "${NICE[@]}" "${PIN[@]}" "$WORK/bin/lean-pluck" pipeline -project "$FORK" -toolchain "$(tcdir)" \
+  if "${NICE[@]}" "${PIN[@]}" "$WORK/bin/sloot" pipeline -project "$FORK" -toolchain "$(tcdir)" \
       -store "$STORE" -extractor "$WORK/bin/pluck-extract" -targets "$TARGET" \
       -local "$r" -pluck "$r" -out "$OUT" -bin-source -lake; then
     echo "verified" > "$OUT/VERIFY-STATUS"
@@ -194,18 +194,18 @@ publish() {
   sum=$wt/results/$day/SUMMARY.md
   summary > "$sum"
   git -C "$wt" add "results/$day"
-  git -C "$wt" commit --quiet -m "lean-pluck results $day: $TARGET on $(git -C "$FORK" rev-parse --short HEAD)" || echo "nothing new to commit"
+  git -C "$wt" commit --quiet -m "sloot results $day: $TARGET on $(git -C "$FORK" rev-parse --short HEAD)" || echo "nothing new to commit"
   if [ "${SKIP_PUSH:-0}" = 1 ]; then echo "SKIP_PUSH=1: not pushing"; return 0; fi
   git -C "$wt" push --quiet origin "$branch" || { echo "push failed; push later with: git -C $wt push origin $branch"; return 1; }
   echo "pushed $branch"
 }
 
 summary() {
-  echo "# lean-pluck desktop run"
+  echo "# sloot desktop run"
   echo
   echo "* host: $(uname -sr), $NPROC cores (used $JOBS), $(free -g 2>/dev/null | awk '/Mem:/ {print $2 " GB RAM"}')"
   echo "* fork: $(git -C "$FORK" rev-parse HEAD)"
-  echo "* lean-pluck: $(git -C "$PLUCK" rev-parse HEAD)"
+  echo "* sloot: $(git -C "$PLUCK" rev-parse HEAD)"
   echo "* toolchain: $(cat "$FORK/lean-toolchain")"
   echo "* target: \`$TARGET\`; verify: $(cat "$OUT/VERIFY-STATUS" 2>/dev/null || echo 'not run')"
   echo
@@ -220,7 +220,7 @@ summary() {
 }
 
 # ---------------------------------------------------------------- main
-say "lean-pluck desktop run in $WORK (log: $LOG)"
+say "sloot desktop run in $WORK (log: $LOG)"
 run_phase prereqs   prereqs
 run_phase clone     clone
 run_phase toolchain toolchain

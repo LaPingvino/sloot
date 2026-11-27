@@ -13,8 +13,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/LaPingvino/lean-pluck/internal/graph"
-	"github.com/LaPingvino/lean-pluck/internal/project"
+	"github.com/LaPingvino/sloot/internal/graph"
+	"github.com/LaPingvino/sloot/internal/project"
 )
 
 // Command is one source span owning one or more constants.
@@ -195,7 +195,7 @@ func Run(g *graph.Graph, p *project.Project, targets []string, opt Options, log 
 			res.EmptiedFiles = append(res.EmptiedFiles, mod)
 		}
 		res.LinesAfter += strings.Count(cleaned, "\n") + 1
-		header := fmt.Sprintf("-- lean-pluck: plucked from %s for %s; %d of %d declarations kept, the rest in bin/.\n",
+		header := fmt.Sprintf("-- sloot: plucked from %s for %s; %d of %d declarations kept, the rest in bin/.\n",
 			rel, strings.Join(targets, ", "), kept, ownCmds)
 		dst := filepath.Join(srcDir, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {

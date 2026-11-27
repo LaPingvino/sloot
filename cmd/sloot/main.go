@@ -1,4 +1,4 @@
-// Command lean-pluck streams, records and plucks Lean 4 developments.
+// Command sloot streams, records and plucks Lean 4 developments.
 // Phase 1: graph extraction from an existing build, closure, closure
 // reports, dependency queries, report diffs, and source cuts with a bin.
 package main
@@ -15,27 +15,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LaPingvino/lean-pluck/internal/cut"
-	"github.com/LaPingvino/lean-pluck/internal/graph"
-	"github.com/LaPingvino/lean-pluck/internal/project"
-	"github.com/LaPingvino/lean-pluck/internal/report"
+	"github.com/LaPingvino/sloot/internal/cut"
+	"github.com/LaPingvino/sloot/internal/graph"
+	"github.com/LaPingvino/sloot/internal/project"
+	"github.com/LaPingvino/sloot/internal/report"
 )
 
-const usage = `lean-pluck: stream and pluck Lean 4 developments (phase-1 prototype)
+const usage = `sloot: stream and pluck Lean 4 developments (phase-1 prototype)
 
-  lean-pluck graph   -project DIR -toolchain DIR -store DIR -modules Mod[,Mod…] [-all-local]
+  sloot graph   -project DIR -toolchain DIR -store DIR -modules Mod[,Mod…] [-all-local]
         extract the declaration graph of the modules' import closure from an existing build
-  lean-pluck closure -store DIR -targets A[,B…]           closure size and axioms
-  lean-pluck why     -store DIR FROM TO                   does FROM depend on TO? print the path
-  lean-pluck report  -project DIR -toolchain DIR -store DIR -targets A[,B…] [-local R] [-vendor Z] [-json F]
+  sloot closure -store DIR -targets A[,B…]           closure size and axioms
+  sloot why     -store DIR FROM TO                   does FROM depend on TO? print the path
+  sloot report  -project DIR -toolchain DIR -store DIR -targets A[,B…] [-local R] [-vendor Z] [-json F]
         closure report: axioms, hypotheses, packages, Mathlib areas, size
-  lean-pluck diff    BEFORE.json AFTER.json               compare two report sets (exit 1 on new axioms/hypotheses)
-  lean-pluck verify  -project DIR -toolchain DIR -store DIR -out DIR [-lake]
+  sloot diff    BEFORE.json AFTER.json               compare two report sets (exit 1 on new axioms/hypotheses)
+  sloot verify  -project DIR -toolchain DIR -store DIR -out DIR [-lake]
         compile the plucked tree with stock lean (into DIR/build), compare statements and axioms
-  lean-pluck pipeline -project DIR -toolchain DIR -store DIR -targets … -local R -vendor Z -pluck R -out DIR [-lake] [-bin-source]
+  sloot pipeline -project DIR -toolchain DIR -store DIR -targets … -local R -vendor Z -pluck R -out DIR [-lake] [-bin-source]
         report, cut and verify with one load of the store; writes DIR/report.{md,json}
-  lean-pluck relations -store DIR -out DIR               CSV relations (decl, uses, axiom, imports, extra_use)
-  lean-pluck cut     -project DIR -store DIR -targets A[,B…] -pluck R[,R…] -out DIR [-bin-source]
+  sloot relations -store DIR -out DIR               CSV relations (decl, uses, axiom, imports, extra_use)
+  sloot cut     -project DIR -store DIR -targets A[,B…] -pluck R[,R…] -out DIR [-bin-source]
         write the plucked source tree and the bin
 
 Common flags: -extractor PATH (default: lean/.lake/build/bin/pluck-extract next to this repo)
@@ -97,7 +97,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "lean-pluck:", err)
+		fmt.Fprintln(os.Stderr, "sloot:", err)
 		os.Exit(1)
 	}
 }

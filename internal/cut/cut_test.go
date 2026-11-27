@@ -3,7 +3,7 @@ package cut
 import (
 	"testing"
 
-	"github.com/LaPingvino/lean-pluck/internal/graph"
+	"github.com/LaPingvino/sloot/internal/graph"
 )
 
 func TestCommandsGrouping(t *testing.T) {

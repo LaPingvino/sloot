@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LaPingvino/lean-pluck/internal/graph"
+	"github.com/LaPingvino/sloot/internal/graph"
 )
 
 // StandardAxioms are the three axioms Lean's own library uses.

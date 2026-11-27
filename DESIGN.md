@@ -1,6 +1,6 @@
-# lean-pluck: streaming and plucking for big Lean 4 developments
+# sloot: streaming and plucking for big Lean 4 developments
 
-Status: design draft, 2026-11-24. Working name `lean-pluck`. Alternatives are
+Status: design draft, 2026-11-24. Name: `sloot` (Dutch for a drainage ditch, the stream it runs; formerly `lean-pluck`). Alternatives were
 in §13.
 
 ## 1. Problem
@@ -12,7 +12,7 @@ runner (4 CPUs, 16 GB RAM, 14 GB SSD, 6 h per job) or a small VPS you cannot
 hold every `.olean` at once. You also cannot afford the 5.9 GB whole-Mathlib
 export that independent kernels take (see §2.1).
 
-`lean-pluck` is a general, open engine with four jobs:
+`sloot` is a general, open engine with four jobs:
 
 1. **Stream.** Compile a project module by module in import order. Each
    compiled module is kept only while a later module still imports it, so
@@ -158,7 +158,7 @@ Notation: compile set `S` (the import closure of the targets) and an order
   You cannot compile `m` without its closure present. Base modules such as
   `Mathlib.Order.Basic` stay live almost to the end. The design promises
   *peak ≈ the largest single closure*, not *peak ≈ a single module*.
-  `lean-pluck plan` prints that bound and the predicted peak for the chosen
+  `sloot plan` prints that bound and the predicted peak for the chosen
   order before anything runs.
 * **Ordering heuristic.** List scheduling over the DAG. Among ready modules,
   pick the one that retires the most live bytes (makes the most `lastUse`
@@ -384,7 +384,7 @@ claims*: what each theorem rests on (`CLAIMS.md`, `PRICES.md`,
 `STATEMENTS.md`, the session gate). They are generic. Any project that
 states results under hypotheses gets the same use from them.
 
-**Closure report, per theorem** (`lean-pluck report`, Markdown plus JSON):
+**Closure report, per theorem** (`sloot report`, Markdown plus JSON):
 
 * **Axioms**: the axioms in `K(T)`, with the non-standard ones flagged.
   Anything beyond `propext`, `Classical.choice` and `Quot.sound` counts as
@@ -404,14 +404,14 @@ states results under hypotheses gets the same use from them.
 * **Size**: constants in the closure, total term size, and (after a cut)
   the source lines kept.
 
-**Diff between two commits** (`lean-pluck diff A.json B.json`). For each
+**Diff between two commits** (`sloot diff A.json B.json`). For each
 theorem it reports whether the closure grew or shrank, which axioms and
 hypotheses entered or left, and how many project constants were added or
 removed. It exits non-zero when a non-standard axiom or a new hypothesis
 enters, which makes it a ready check for a session gate. With the query store
 (§11), the same diff is a `dolt diff` between two analysed commits.
 
-**Query** (`lean-pluck why X Y`). "Does `X` depend on `Y`?" The answer
+**Query** (`sloot why X Y`). "Does `X` depend on `Y`?" The answer
 yes comes with a shortest dependency path, each step tagged with its module.
 Every step also says whether the use is in the *statement* or the *proof*,
 because a hypothesis that enters through a definition in a statement prices
@@ -474,7 +474,7 @@ A project calls it with
 ```yaml
 jobs:
   pluck:
-    uses: <org>/lean-pluck/.github/workflows/pluck.yml@v1
+    uses: <org>/sloot/.github/workflows/pluck.yml@v1
     with: { targets: "Main.rh_of_X Main.grh_of_Y", policy: default, kernels: "nanoda,lean4lean" }
     permissions: { actions: write, contents: read }
 ```
@@ -499,31 +499,31 @@ a pinned commit and plucks and reports on it without writing to it.
 ## 9. CLI sketch
 
 ```
-lean-pluck plan    --project DIR --targets Mod.thm,… [--order greedy|topo] [--budget 10G]
+sloot plan    --project DIR --targets Mod.thm,… [--order greedy|topo] [--budget 10G]
                    → plan.json: compile set, order, lastUse, predicted peak, lower bound
-lean-pluck stream  --plan plan.json --store DIR [--jobs 2] [--time 5h15m] [--state pluck-state.json]
+sloot stream  --plan plan.json --store DIR [--jobs 2] [--time 5h15m] [--state pluck-state.json]
                    compiles, extracts, deletes; resumable
-lean-pluck graph   --store DIR [--from-oleans LEAN_PATH]   # extract from an existing build (no compile)
-lean-pluck closure --graph DIR --targets … [--why NAME]    # K(T), axioms, explanation path
-lean-pluck cut     --graph DIR --targets … --policy minimal|default|module --out DIR [--bin-source]
-lean-pluck verify  --pluck DIR [--repair N]                # stream-compile, compare, repair loop
-lean-pluck restore --pluck DIR NAME|MODULE
-lean-pluck export  --pluck DIR [--exporter PATH]
-lean-pluck check   --pluck DIR --kernels leanchecker,nanoda,lean4lean,con-leche,con-ron
-lean-pluck report  --targets … [--local R] [--vendor Z] [--json F]   # closure report (§7.5)
-lean-pluck diff    A.json B.json | --dolt C1 C2           # closure diff; exit 1 on new axioms/hypotheses
-lean-pluck why     X Y                                     # does X depend on Y? path, statement/proof tagged
-lean-pluck relations --out DIR                             # CSV relations (§11.1) for Dolt / Datalog
-lean-pluck query   FILE.dl | -e 'rule…'                    # Datalog over the relations, with derivations
-lean-pluck find    'PATTERN' [--within T]                  # Loogle, joined with the relations
-lean-pluck run     …                                       # all of the above
-lean-pluck gha     plan|batch|finish                       # CI helpers used by pluck.yml
+sloot graph   --store DIR [--from-oleans LEAN_PATH]   # extract from an existing build (no compile)
+sloot closure --graph DIR --targets … [--why NAME]    # K(T), axioms, explanation path
+sloot cut     --graph DIR --targets … --policy minimal|default|module --out DIR [--bin-source]
+sloot verify  --pluck DIR [--repair N]                # stream-compile, compare, repair loop
+sloot restore --pluck DIR NAME|MODULE
+sloot export  --pluck DIR [--exporter PATH]
+sloot check   --pluck DIR --kernels leanchecker,nanoda,lean4lean,con-leche,con-ron
+sloot report  --targets … [--local R] [--vendor Z] [--json F]   # closure report (§7.5)
+sloot diff    A.json B.json | --dolt C1 C2           # closure diff; exit 1 on new axioms/hypotheses
+sloot why     X Y                                     # does X depend on Y? path, statement/proof tagged
+sloot relations --out DIR                             # CSV relations (§11.1) for Dolt / Datalog
+sloot query   FILE.dl | -e 'rule…'                    # Datalog over the relations, with derivations
+sloot find    'PATTERN' [--within T]                  # Loogle, joined with the relations
+sloot run     …                                       # all of the above
+sloot gha     plan|batch|finish                       # CI helpers used by pluck.yml
 ```
 
 Go handles orchestration, scheduling, the graph, the pluck, the bin and the
 reports. Lean handles `Extract.lean` (olean parts to JSONL) and
 `Compare.lean` (type hashes and axioms in a rebuilt environment). Both are
-compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
+compiled per toolchain into `~/.cache/sloot/<toolchain>/`.
 
 ## 10. Phased plan
 
@@ -567,7 +567,7 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
     No repair round was needed.
   * Loading the whole store into Go maps takes about 2 min per command. The
     dense `index.bin` of §7.1 (name ids and CSR adjacency) is the next fix.
-* **Phase 1b, relations.** `lean-pluck relations` emits the §11.1 tables as
+* **Phase 1b, relations.** `sloot relations` emits the §11.1 tables as
   CSV (done for `decl`, `uses`, `axiom`, `imports` and `extra_use`). They come straight from the graph, so they arrive early.
 * **Phase 2, streaming.** `plan` and `stream` with refcounted deletion,
   measured on a Mathlib slice compiled from source (for example the closure
@@ -589,7 +589,7 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
 * **Phase 3W, pull mode** (§12): a coordinator hands out work units, and
   idle machines pull them, in the style of SETI@home or Folding@home.
 * **Phase 6, Alpöge.** Run from a private fork of the release, which
-  owns its own targets and reports. lean-pluck just gets bug reports. The
+  owns its own targets and reports. sloot just gets bug reports. The
   first heavy run uses `scripts/desktop-run.sh` on one big machine. It runs
   one command with resumable phases: build, extract, report, pluck, verify,
   then publish to a results branch of the fork. That runner is the first
@@ -598,7 +598,7 @@ compiled per toolchain into `~/.cache/lean-pluck/<toolchain>/`.
 ## 11. Query layer: relations, Dolt, Datalog, statement search
 
 The graph is already relational, so the extractor's records map straight onto
-tables. Phase 1 already emits them as CSV (`lean-pluck relations`). That export has been
+tables. Phase 1 already emits them as CSV (`sloot relations`). That export has been
 loaded into Dolt with `dolt table import`, and the recursive closure query
 ran on it.
 The database and the Datalog front end come after the prototype (phase Q).
@@ -636,7 +636,7 @@ SELECT DISTINCT n FROM dep JOIN axiom ON axiom.name = dep.n;
 `dolt diff <c1> <c2> uses decl hypothesis`, or the `dolt_diff('c1','c2','uses')`
 table function inside SQL, gives the raw closure diff. Both were checked on a
 scratch database.
-`lean-pluck diff --dolt` turns it into the per-theorem summary of §7.5.
+`sloot diff --dolt` turns it into the per-theorem summary of §7.5.
 For Mathlib-scale graphs (about 10⁷ `uses` rows) the recursive CTE is the
 slow path. The Go closure engine stays the fast path, and Dolt is the
 history, diff and ad-hoc layer. Dolt is already in use around this project,
@@ -693,7 +693,7 @@ the same relations as `.facts` files; no lock-in.
 type-pattern search. It runs as `loogle [--json] [--module M] [--path P]
 '(List.replicate (_ + _) _ = _)'` over *any Lake project of the same
 toolchain* and caches its index next to the root olean. We reuse it rather
-than rebuild it. `lean-pluck find PATTERN [--within T]` runs Loogle in
+than rebuild it. `sloot find PATTERN [--within T]` runs Loogle in
 JSON mode on the project (or the plucked tree) and joins the hits with the
 relations. That allows queries such as "statements shaped like `_ ≤ _ * N` in
 the closure of `T`", or "binned theorems with this shape". **LeanSearch**
@@ -768,7 +768,7 @@ outputs unblock the most others, which keeps the wave front wide.
 
 ### 12.3 Workers
 
-* **Installation:** a single static Go binary (`lean-pluck worker`) plus
+* **Installation:** a single static Go binary (`sloot worker`) plus
   elan, at user level. On Linux it runs as a systemd **user** service, on
   macOS as a launchd agent. No root access.
 * **Idle detection:** load average below a threshold over a few minutes,
@@ -826,7 +826,7 @@ same unit costs only the manifest.
 
 ## 13. Names
 
-`lean-pluck` works. Alternatives:
+Chosen: `sloot`. The old working name was `lean-pluck`. Alternatives considered:
 
 * **winnow**: separating grain from chaff, and the chaff is the bin.
 * **lean-thresh**
@@ -834,4 +834,4 @@ same unit costs only the manifest.
 * **gleaner**
 
 My pick is **winnow** (CLI `winnow`, bin = `chaff/`) if the name is free on
-Reservoir. Otherwise keep `lean-pluck`.
+Reservoir. Otherwise keep `sloot`.

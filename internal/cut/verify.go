@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LaPingvino/lean-pluck/internal/graph"
-	"github.com/LaPingvino/lean-pluck/internal/project"
+	"github.com/LaPingvino/sloot/internal/graph"
+	"github.com/LaPingvino/sloot/internal/project"
 )
 
 // Verify compiles the plucked tree with stock Lean, never writing into the
